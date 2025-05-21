@@ -60,20 +60,24 @@ interface Size {
   height: number;
 }
 
-const useSizeFabric = (ref: RefObject<View>) => {
+type OnSizeChangeCallback = (size: Size) => void;
+
+const useSizeFabric = (ref: RefObject<View>, onSizeChange: OnSizeChangeCallback) => {
   const [size, setSize] = useState<null | Size>(null);
   useLayoutEffect(() => {
     if (!ref.current) {
       throw new Error("Canvas ref is null");
     }
     ref.current.measureInWindow((_x, _y, width, height) => {
-      setSize({ width, height });
+      const size = { width, height };
+      setSize(size);
+      onSizeChange(size);
     });
   }, [ref]);
   return { size, onLayout: undefined };
 };
 
-const useSizePaper = (_ref: RefObject<View>) => {
+const useSizePaper = (_ref: RefObject<View>, onSizeChange: OnSizeChangeCallback) => {
   const [size, setSize] = useState<null | Size>(null);
   const onLayout = useCallback<(event: LayoutChangeEvent) => void>(
     ({
@@ -82,7 +86,9 @@ const useSizePaper = (_ref: RefObject<View>) => {
       },
     }) => {
       if (size === null) {
-        setSize({ width, height });
+        const size = { width, height };
+        setSize(size);
+        onSizeChange(size);
       }
     },
     [size],
@@ -97,24 +103,24 @@ export const Canvas = forwardRef<
   const viewRef = useRef(null);
   const FABRIC = RNWebGPU.fabric;
   const useSize = FABRIC ? useSizeFabric : useSizePaper;
-  const [contextId, _] = useState(() => generateContextId());
+  const [contextId, _] = useState(generateContextId);
   const cb = useRef<() => void>();
-  const { size, onLayout } = useSize(viewRef);
-  useEffect(() => {
-    if (size && cb.current) {
-      cb.current();
-    }
-  }, [size]);
+  const sizeRef = useRef<Size | null>(null);
+  const { onLayout } = useSize(viewRef, useCallback((size) => {
+    sizeRef.current = size;
+    cb.current && cb.current();
+  }, []));
+  
   useImperativeHandle(ref, () => ({
     getContextId: () => contextId,
     getNativeSurface: () => {
-      if (size === null) {
+      if (sizeRef.current === null) {
         throw new Error("[WebGPU] Canvas size is not available yet");
       }
       return RNWebGPU.getNativeSurface(contextId);
     },
     whenReady(callback: () => void) {
-      if (size === null) {
+      if (sizeRef.current === null) {
         cb.current = callback;
       } else {
         callback();
@@ -124,16 +130,17 @@ export const Canvas = forwardRef<
       if (contextName !== "webgpu") {
         throw new Error(`[WebGPU] Unsupported context: ${contextName}`);
       }
-      if (size === null) {
+      if (sizeRef.current === null) {
         throw new Error("[WebGPU] Canvas size is not available yet");
       }
       return RNWebGPU.MakeWebGPUCanvasContext(
         contextId,
-        size.width,
-        size.height,
+        sizeRef.current.width,
+        sizeRef.current.height,
       );
     },
   }));
+
   return (
     <View collapsable={false} ref={viewRef} onLayout={onLayout} {...props}>
       <WebGPUNativeView
